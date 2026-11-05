@@ -12,7 +12,7 @@ An [Omarchy](https://omarchy.org) bar widget for your Android phone, at home or 
   - The phone's latest notifications: reply inline or dismiss.
   - Pairing requests, and a **Lost phone…** button that locks the phone if it's still in reach, unpairs it, drops ADB, and opens the Tailscale admin page so you can remove it from your tailnet.
 - **Away from home:** `phone.py tailnet on` gives KDE Connect the phone's Tailscale address, so it stays connected over Tailscale. Files go over Taildrop when the phone is online there.
-- **Phone → PC:** `phone.py setup-commands` gives the phone KDE Connect "Run command" buttons for this PC: lock, night light, mute, silence notifications, keep awake, mirror, suspend, Wi-Fi/Bluetooth, and VNC on/off if [omarchy-vnc](https://github.com/YassineSawahi/omarchy-vnc) is installed.
+- **Phone → PC:** `phone.py setup-commands` gives the phone KDE Connect "Run command" buttons for this PC (it replaces any Run command list the phone had, and only when you run it): lock, night light, mute, silence notifications, keep awake, mirror, suspend, Wi-Fi/Bluetooth, and VNC on/off if [omarchy-vnc](https://github.com/YassineSawahi/omarchy-vnc) is installed.
 
 ## Install
 
@@ -60,6 +60,26 @@ journalctl --user -u omarchy-phone-daemon -f    # what it's doing
 ## Privacy
 
 Everything stays between your PC and your phone: KDE Connect, ADB and Tailscale talk directly to each other. Notification text from the phone is shown as plain text only.
+
+## Remove
+
+Undo the optional extras first, if you set them up:
+
+```bash
+P=~/.config/omarchy/plugins/io.github.yassinesawahi.phone
+python3 $P/phone.py tailnet off                       # KDE Connect forgets the phone's Tailscale address
+systemctl --user disable --now omarchy-phone-daemon   # the background daemon
+rm ~/.config/systemd/user/omarchy-phone-daemon.service
+```
+
+Then remove the plugin and its state:
+
+```bash
+omarchy plugin remove io.github.yassinesawahi.phone
+rm -rf ~/.local/state/omarchy-phone
+```
+
+The phone's Run command buttons from `setup-commands` would now point at nothing: clear them in KDE Connect's Run command settings, or delete `~/.config/kdeconnect/*/kdeconnect_runcommand/config`. Permissions granted with `setup-phone` stay on the phone until you revoke them in Android's app settings. Photos in `~/Pictures/Phone` are yours and stay.
 
 ## License
 
