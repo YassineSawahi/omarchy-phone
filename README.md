@@ -38,9 +38,24 @@ Every panel action is also a `phone.py` subcommand (`ring`, `mirror`, `send`, `h
 
 Settings: refresh interval (default 20 s), low battery colour (default 15%), notifications shown (default 5).
 
-## Optional: home or away
+## Optional: the background daemon
 
-The panel can say whether the phone is home or away. Any background process can write `{"where": "home" | "away" | "unknown"}` to `$XDG_RUNTIME_DIR/omarchy-phone-presence.json`, and the panel shows it. Without one, the phone counts as home while KDE Connect reaches it over the LAN. For a walk-away lock, such a process can ask the widget whether the PC has been idle for 30 s: `omarchy-shell io.github.yassinesawahi.phone idle`.
+[`daemon/phoned.py`](daemon/phoned.py) works out whether the phone is home and acts on it:
+
+- **Walk-away lock:** when the phone leaves, this PC locks as soon as it has gone 30 s without input. A VNC viewer holds that off until they disconnect, and unlocking at the desk while the phone is away stands it down until the phone is back.
+- **Welcome back:** when the phone comes home, the screen lights up on the lock screen. Nothing unlocks by itself.
+- **ADB upkeep:** a phone plugged in over USB gets moved to ADB over Wi-Fi. A phone that joins someone else's Wi-Fi gets ADB switched off, since Android 10 listens for it on every network.
+- **Focus:** Do Not Disturb on the phone and on this PC follow each other.
+- **Photos:** new camera photos come over to `~/Pictures/Phone` while the phone is home.
+- **Battery health:** it measures the battery's real capacity over one run down from a full charge and tells you what it found.
+
+"Home" means Tailscale reaches the phone directly on this PC's own network. Not reaching it at all changes nothing, so a phone that's off or flat never locks anything. The panel shows home or away from the daemon. Without it, the phone counts as home while KDE Connect reaches it over the LAN.
+
+```bash
+cp ~/.config/omarchy/plugins/io.github.yassinesawahi.phone/daemon/omarchy-phone-daemon.service ~/.config/systemd/user/
+systemctl --user enable --now omarchy-phone-daemon
+journalctl --user -u omarchy-phone-daemon -f    # what it's doing
+```
 
 ## Privacy
 

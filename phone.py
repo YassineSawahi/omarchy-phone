@@ -42,7 +42,7 @@ or location, so those go through `adb shell`: on Android 11+ once Wireless
 debugging is paired with `adb pair`, on older phones after plugging in over
 USB once per boot and running `wifi-adb`.
 
-Home or away: an optional background daemon (not part of this plugin) can
+Home or away: the optional daemon in daemon/ (or anything else) can
 write {"where": "home" | "away" | "unknown", ...} to
 $XDG_RUNTIME_DIR/omarchy-phone-presence.json, and the panel shows it.
 Without one, the phone counts as home while KDE Connect reaches it over the LAN.

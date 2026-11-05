@@ -1,0 +1,13 @@
+[Unit]
+Description=Phone link in the background: walk-away lock, ADB upkeep, Focus sync, photos, battery check
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.config/omarchy/plugins/io.github.yassinesawahi.phone/daemon/phoned.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -666,7 +666,7 @@ BarWidget {
             visible: root.adbReady
             iconText: root.glyphs.camera
             text: "Take photo"
-            tooltipText: "Open the phone's camera; the photo lands on this PC's clipboard (Super+Alt+C)"
+            tooltipText: "Open the phone's camera; the photo lands on this PC's clipboard"
             bordered: true
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
