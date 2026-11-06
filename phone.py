@@ -10,7 +10,8 @@ Every other subcommand is an action behind a button or a shortcut:
 
   ring | clipboard | pair | accept | reject | unpair <device-id>
   dismiss <device-id> <notification-id>
-  reply <device-id> <reply-id> <message>
+  reply <device-id> <reply-id>   the reply's text comes on stdin, one line, so
+                                 it never shows in the process list
   toggle <bluetooth|dnd|data|location> <on|off>
   wifi-adb           move a USB-connected phone's adb onto Wi-Fi (Android ≤ 10)
   lock-phone
@@ -911,8 +912,9 @@ def main(argv):
         return device_call(args[0], "", ".device", "unpair")
     if cmd == "dismiss":
         return device_call(args[0], f"/notifications/{args[1]}", ".device.notifications.notification", "dismiss")
-    if cmd == "reply" and len(args) == 3:
-        return reply(*args)
+    if cmd == "reply" and len(args) == 2:
+        message = sys.stdin.readline().strip()
+        return reply(*args, message) if message else 2
     if cmd == "toggle" and len(args) == 2 and args[0] in TOGGLES and args[1] in ("on", "off"):
         return adb_shell(TOGGLES[args[0]][args[1]])
     if cmd == "wifi-adb":

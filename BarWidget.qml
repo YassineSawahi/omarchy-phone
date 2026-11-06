@@ -265,12 +265,28 @@ BarWidget {
     root.replyTarget = root.replyTarget === id ? "" : id
   }
 
+  // Replies queue up and go out one at a time through replyProc, which hands
+  // phone.py the text on stdin: on the command line, any other user on the
+  // machine could read it in the process list.
+  property var replyQueue: []
+  property bool replyBusy: false
+
   function sendReply(replyId, text) {
-    var message = String(text || "").trim()
+    var message = String(text || "").replace(/[\r\n]+/g, " ").trim()
     if (!message || !root.phone) return
     root.replyTarget = ""
-    Quickshell.execDetached(["python3", root.scriptPath, "reply", root.phone.id, replyId, message])
-    mirrorRefresh.restart()
+    root.replyQueue = root.replyQueue.concat([{ device: root.phone.id, replyId: replyId, message: message }])
+    root.nextReply()
+  }
+
+  function nextReply() {
+    if (root.replyBusy || root.replyQueue.length === 0) return
+    root.replyBusy = true
+    var next = root.replyQueue[0]
+    root.replyQueue = root.replyQueue.slice(1)
+    replyProc.message = next.message
+    replyProc.command = ["python3", root.scriptPath, "reply", next.device, next.replyId]
+    replyProc.running = true
   }
 
   // The floating bar can mount a hidden second copy of a widget, and an IPC
@@ -319,6 +335,21 @@ BarWidget {
   Process {
     id: actionProc
     onExited: root.refresh()
+  }
+
+  Process {
+    id: replyProc
+    property string message: ""
+    stdinEnabled: true
+    onStarted: {
+      write(message + "\n")
+      message = ""
+    }
+    onExited: {
+      root.replyBusy = false
+      root.refresh()
+      root.nextReply()
+    }
   }
 
   // scrcpy takes a moment to come up; re-read so the button flips to Stop.
