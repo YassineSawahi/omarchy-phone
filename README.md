@@ -57,9 +57,38 @@ systemctl --user enable --now omarchy-phone-daemon
 journalctl --user -u omarchy-phone-daemon -f    # what it's doing
 ```
 
+## How it works
+
+The widget runs `phone.py` on a timer and draws the JSON it prints. Every button runs a `phone.py` subcommand. The helper reaches your phone three ways:
+
+- **KDE Connect** is the main link: `kdeconnectd` on this PC, the KDE Connect app on the phone. You pair them once on the same Wi-Fi. It carries the battery, notifications and inline replies, ringing, the clipboard, links, SMS, pairing, and the phone's Run command buttons for this PC. `phone.py` talks to `kdeconnectd` over D-Bus on your session bus.
+- **ADB** (wireless debugging) does what Android won't let an ordinary app do: the Bluetooth, Do Not Disturb, data and location switches, locking the phone, scrcpy mirroring, the camera, photo import and `setup-phone`.
+- **Taildrop** sends files whenever the phone is online on your tailnet. When it isn't, but KDE Connect can see the phone, they go through KDE Connect instead.
+
+**Home and away.** At home, KDE Connect finds the phone on your Wi-Fi by itself, and so does ADB. On mobile data or someone else's Wi-Fi they can't see it. `phone.py tailnet on` adds the phone's Tailscale address to KDE Connect's list of devices to try, so it reaches the phone through Tailscale wherever it is. Tailscale links your own devices directly, so nothing is opened on your router or to the internet. ADB can follow the phone over Tailscale too, but only on port 5555 (after `wifi-adb`). Wireless debugging on Android 11+ is found on the local network only.
+
+**The daemon** asks `tailscale ping` how it reaches the phone. A direct path on this PC's own network means home. A relayed path, or a direct one from another network, means away. It writes the answer to `$XDG_RUNTIME_DIR` for the panel, and acts on it as listed above.
+
+**Phone → PC.** The Run command buttons live in KDE Connect's settings on this PC. Tapping one on the phone asks `kdeconnectd` to run it here: an `omarchy` command, or a `phone.py` subcommand like `mirror`.
+
+```text
+ YOUR PHONE                           THIS PC
+ KDE Connect app <-- home Wi-Fi ----> kdeconnectd <-- D-Bus --+
+                 <-- or Tailscale -->                         |
+ Wireless debug  <-- ADB -----------> adb, scrcpy <-----------+-- phone.py
+ Tailscale app   <-- Taildrop ------- tailscale <-------------+      ^
+                                                                     | JSON
+                                      daemon (optional):         bar widget
+                                      tailscale ping -> home or away
+```
+
 ## Privacy
 
-Everything stays between your PC and your phone: KDE Connect, ADB and Tailscale talk directly to each other. Notification text from the phone is shown as plain text only.
+Everything stays between your PC and your phone: KDE Connect, ADB and Tailscale talk directly to each other. Notification text from the phone is shown as plain text only. On the PC, other accounts can't read or use any of it:
+
+- Inline replies reach `phone.py` on stdin, and the clipboard text Handoff puts back goes to `wl-copy` on stdin. Notifications go to your notification service over D-Bus. None of it sits on a command line, where any account could read it in the process list.
+- adb normally runs its server on `127.0.0.1:5037`, which any account on the PC could use to drive your phone. This plugin's adb (and scrcpy) use a socket in your private runtime folder instead, `$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. To share that server from your own shell: `export ADB_SERVER_SOCKET=localfilesystem:$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. If you already set `ADB_SERVER_SOCKET` yourself, the plugin uses yours. After updating, `adb kill-server` stops an old server still on port 5037.
+- Imported photos land in `~/Pictures/Phone`, created readable by you alone (a folder you already have keeps its permissions). State and runtime files stay in your own folders, never `/tmp`.
 
 ## Remove
 

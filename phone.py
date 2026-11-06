@@ -75,7 +75,24 @@ ADB_TIMEOUT = 5
 TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 TAILSCALE_ADMIN = "https://login.tailscale.com/admin/machines"
 
-RUNTIME = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+def runtime_dir():
+    """$XDG_RUNTIME_DIR, which is yours alone. Without it, a private folder in ~/.cache, never
+    /tmp, where another account could plant files or symlinks under these names first."""
+    d = os.environ.get("XDG_RUNTIME_DIR")
+    if d and os.path.isdir(d):
+        return d
+    d = os.path.join(os.path.expanduser("~/.cache"), "omarchy-phone-run")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    return d
+
+
+RUNTIME = runtime_dir()
+# adb's server normally listens on 127.0.0.1:5037, where any account on this machine could use it
+# to drive your phone. This plugin's adb (and scrcpy, which runs adb) use a socket in your runtime
+# folder instead. Your own ADB_SERVER_SOCKET, if you set one, wins.
+os.environ.setdefault("ADB_SERVER_SOCKET",
+                      "localfilesystem:" + os.path.join(RUNTIME, "omarchy-phone-adb.sock"))
 NUDGE_STAMP = os.path.join(RUNTIME, "omarchy-phone-nudge")
 NUDGE_EVERY = 60
 RECONNECT_STAMP = os.path.join(RUNTIME, "omarchy-phone-adb-retry")
@@ -155,9 +172,18 @@ def notify(title, body, urgency="normal", image=None, open_path=None):
         cmd += [title, body]
         if open_path:
             cmd += ["--exec", "xdg-open", open_path]
-        subprocess.run(cmd, check=False)
+        subprocess.run(cmd, check=False)  # photo notifications: a title and a path, nothing private
         return
-    subprocess.run(["notify-send", "-a", "Phone", "-u", urgency, "-i", "phone", title, body], check=False)
+    # Straight over D-Bus rather than through notify-send: the body can be clipboard text, and a
+    # command's arguments are readable by any user in the process list.
+    hints = {"urgency": GLib.Variant("y", {"low": 0, "normal": 1, "critical": 2}.get(urgency, 1))}
+    try:
+        bus().call_sync("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                        "org.freedesktop.Notifications", "Notify",
+                        GLib.Variant("(susssasa{sv}i)", ("Phone", 0, "phone", title, body, [], hints, -1)),
+                        None, Gio.DBusCallFlags.NONE, 3000, None)
+    except GLib.Error:
+        pass
 
 
 def due(stamp, every):
@@ -603,7 +629,7 @@ def camera_photos(serial):
 
 def pull_photo(serial, name):
     """Copy one photo to PHOTOS_DIR once the camera has finished writing it."""
-    os.makedirs(PHOTOS_DIR, exist_ok=True)
+    os.makedirs(PHOTOS_DIR, mode=0o700, exist_ok=True)  # your photos: yours alone
     src = f"{CAMERA_DIR}/{name}"
     last = -1
     for _ in range(12):
@@ -667,7 +693,7 @@ def photos(quiet=False):
                 break  # try the rest next time, from here
             got.append(dest)
         since = mtime
-    os.makedirs(STATE_DIR, exist_ok=True)
+    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
     with open(state_path, "w") as f:
         json.dump({"since": since}, f)
     if got:
@@ -751,7 +777,9 @@ def browser_url():
     url = clipboard_text().strip()
     subprocess.run(["wtype", "-k", "Escape"])
     if saved and saved != url:
-        subprocess.run(["wl-copy", "--", saved])
+        # On stdin, not as an argument: wl-copy stays running to serve the clipboard,
+        # and its arguments are readable by any user in the process list.
+        subprocess.run(["wl-copy"], input=saved, text=True)
     return url if re.match(r"https?://\S+$", url) else ""
 
 
