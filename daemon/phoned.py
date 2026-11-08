@@ -373,7 +373,7 @@ class Daemon:
             return {}
 
     def save_run(self):
-        os.makedirs(phone.STATE_DIR, mode=0o700, exist_ok=True)
+        phone.private_dir(phone.STATE_DIR)
         tmp = RUN_FILE + ".tmp"
         with open(tmp, "w") as f:
             json.dump(self.battery, f)

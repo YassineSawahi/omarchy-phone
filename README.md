@@ -88,7 +88,7 @@ Everything stays between your PC and your phone: KDE Connect, ADB and Tailscale 
 
 - Inline replies reach `phone.py` on stdin, and the clipboard text Handoff puts back goes to `wl-copy` on stdin. Notifications go to your notification service over D-Bus. None of it sits on a command line, where any account could read it in the process list.
 - adb normally runs its server on `127.0.0.1:5037`, which any account on the PC could use to drive your phone. This plugin's adb (and scrcpy) use a socket in your private runtime folder instead, `$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. To share that server from your own shell: `export ADB_SERVER_SOCKET=localfilesystem:$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. If you already set `ADB_SERVER_SOCKET` yourself, the plugin uses yours. After updating, `adb kill-server` stops an old server still on port 5037.
-- Imported photos land in `~/Pictures/Phone`, created readable by you alone (a folder you already have keeps its permissions). State and runtime files stay in your own folders, never `/tmp`.
+- Imported photos land in `~/Pictures/Phone`, readable by you alone: the folder is set to `0700` on every import, including one an older version left open, and each photo is pulled under umask `077`, so it is `0600` from its first byte. The state folder is kept `0700` the same way. State and runtime files stay in your own folders, never `/tmp`.
 
 ## Remove
 

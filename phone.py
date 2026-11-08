@@ -75,6 +75,14 @@ ADB_TIMEOUT = 5
 TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 TAILSCALE_ADMIN = "https://login.tailscale.com/admin/machines"
 
+def private_dir(path):
+    """Create `path` for this account alone. makedirs' mode only applies to a folder it creates,
+    so an existing one (say 0755, from an older version under umask 022) is tightened too."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
 def runtime_dir():
     """$XDG_RUNTIME_DIR, which is yours alone. Without it, a private folder in ~/.cache, never
     /tmp, where another account could plant files or symlinks under these names first."""
@@ -82,9 +90,7 @@ def runtime_dir():
     if d and os.path.isdir(d):
         return d
     d = os.path.join(os.path.expanduser("~/.cache"), "omarchy-phone-run")
-    os.makedirs(d, mode=0o700, exist_ok=True)
-    os.chmod(d, 0o700)
-    return d
+    return private_dir(d)
 
 
 RUNTIME = runtime_dir()
@@ -629,7 +635,7 @@ def camera_photos(serial):
 
 def pull_photo(serial, name):
     """Copy one photo to PHOTOS_DIR once the camera has finished writing it."""
-    os.makedirs(PHOTOS_DIR, mode=0o700, exist_ok=True)  # your photos: yours alone
+    private_dir(PHOTOS_DIR)  # your photos: yours alone
     src = f"{CAMERA_DIR}/{name}"
     last = -1
     for _ in range(12):
@@ -640,8 +646,17 @@ def pull_photo(serial, name):
         last = size
         time.sleep(0.5)
     dest = os.path.join(PHOTOS_DIR, name)
-    r = adb("-s", serial, "pull", "-a", src, dest, timeout=120)
-    return dest if r and r.returncode == 0 else ""
+    # adb creates the file, then (with -a) applies the phone's mode, both masked by the umask:
+    # 077 keeps the photo 0600 from its first byte, whatever the phone's mode was.
+    old = os.umask(0o077)
+    try:
+        r = adb("-s", serial, "pull", "-a", src, dest, timeout=120)
+    finally:
+        os.umask(old)
+    if not (r and r.returncode == 0):
+        return ""
+    os.chmod(dest, 0o600)
+    return dest
 
 
 def camera():
@@ -693,7 +708,7 @@ def photos(quiet=False):
                 break  # try the rest next time, from here
             got.append(dest)
         since = mtime
-    os.makedirs(STATE_DIR, mode=0o700, exist_ok=True)
+    private_dir(STATE_DIR)
     with open(state_path, "w") as f:
         json.dump({"since": since}, f)
     if got:
