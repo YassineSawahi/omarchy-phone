@@ -24,6 +24,8 @@ Needs `kdeconnect` and `python-gobject`. KDE Connect has to be installed on the 
 
 `phone.py setup-phone` grants KDE Connect on the phone the permissions it needs for the clipboard, calls and SMS (needs ADB).
 
+`phone.py setup-kdeconnect` (the panel's **Keep private** button) keeps the pictures in your phone's notifications out of the shared `/tmp`: see [Privacy](#privacy).
+
 ## Controls
 
 | Action | Does |
@@ -88,6 +90,7 @@ Everything stays between your PC and your phone: KDE Connect, ADB and Tailscale 
 
 - Inline replies reach `phone.py` on stdin, and the clipboard text Handoff puts back goes to `wl-copy` on stdin. Notifications go to your notification service over D-Bus. None of it sits on a command line, where any account could read it in the process list.
 - adb normally runs its server on `127.0.0.1:5037`, which any account on the PC could use to drive your phone. This plugin's adb (and scrcpy) use a socket in your private runtime folder instead, `$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. To share that server from your own shell: `export ADB_SERVER_SOCKET=localfilesystem:$XDG_RUNTIME_DIR/omarchy-phone-adb.sock`. If you already set `ADB_SERVER_SOCKET` yourself, the plugin uses yours. After updating, `adb kill-server` stops an old server still on port 5037.
+- KDE Connect saves the pictures in your phone's notifications in `$TMPDIR/kdeconnect_$USER`, by default in the shared `/tmp`, and runs with umask `022`. If another account creates that folder first, KDE Connect uses it anyway and the pictures land there readable by that account. `setup-kdeconnect` (or **Keep private** in the panel, which shows until it's done) gives KDE Connect your private runtime folder as its temporary folder and umask `077`, for both ways it starts: at login (a drop-in for `app-org.kde.kdeconnect.daemon@autostart.service`) and when something calls it over D-Bus (`~/.local/share/dbus-1/services/org.kde.kdeconnect.service` starts that same unit). It restarts KDE Connect and deletes the pictures it left in the old folder. Until then, the plugin claims `/tmp/kdeconnect_$USER` for you (`0700`) whenever nobody else has, and the panel says so if another account owns it.
 - Imported photos land in `~/Pictures/Phone`, readable by you alone: the folder is set to `0700` on every import, including one an older version left open, and each photo is pulled under umask `077`, so it is `0600` from its first byte. The state folder is kept `0700` the same way. State and runtime files stay in your own folders, never `/tmp`.
 
 ## Remove
@@ -99,6 +102,8 @@ P=~/.config/omarchy/plugins/io.github.yassinesawahi.phone
 python3 $P/phone.py tailnet off                       # KDE Connect forgets the phone's Tailscale address
 systemctl --user disable --now omarchy-phone-daemon   # the background daemon
 rm ~/.config/systemd/user/omarchy-phone-daemon.service
+rm ~/.config/systemd/user/app-org.kde.kdeconnect.daemon@autostart.service.d/omarchy-phone-private.conf \
+   ~/.local/share/dbus-1/services/org.kde.kdeconnect.service   # setup-kdeconnect; KDE Connect is fine either way
 ```
 
 Then remove the plugin and its state:

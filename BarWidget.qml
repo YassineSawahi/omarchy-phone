@@ -125,6 +125,9 @@ BarWidget {
     return "Install KDE Connect on the phone (Play Store or F-Droid) and open it on the same Wi-Fi. It shows up here to pair."
   }
 
+  // Set while the pictures in the phone's notifications could be read by another account on this PC.
+  readonly property string picturesHint: root.status && root.status.pictures ? root.status.pictures : ""
+
   readonly property bool adbOverUsb: root.adbReady && !root.adbInfo.wireless
 
   readonly property string adbHint: {
@@ -489,6 +492,31 @@ BarWidget {
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           wrapMode: Text.WordWrap
+        }
+
+        // KDE Connect keeps notification pictures in the shared /tmp until it's set up otherwise.
+        Column {
+          visible: root.picturesHint !== ""
+          width: parent.width
+          spacing: Style.space(6)
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: root.picturesHint
+            color: col.dim
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+          Button {
+            text: "Keep private"
+            tooltipText: "Restart KDE Connect with its temporary folder in your own runtime folder"
+            bordered: true
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            fontSize: Style.font.bodySmall
+            onClicked: root.run(["setup-kdeconnect"])
+          }
         }
 
         // The phone: name, link state, battery.

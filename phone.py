@@ -31,6 +31,9 @@ Every other subcommand is an action behind a button or a shortcut:
   rescan
   setup-commands     give every paired phone the "Run command" buttons that
                      control this PC (replaces any existing list)
+  setup-kdeconnect   keep the pictures in the phone's notifications out of the
+                     shared /tmp: KDE Connect gets your runtime folder as its
+                     temporary folder, and umask 077 (restarts it)
   tailnet [on|off]   add (or remove) the Tailscale address of every Android
                      device on the tailnet to KDE Connect's custom devices
   lost               the phone is gone: lock it if it's still in reach, then
@@ -56,6 +59,8 @@ import json
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import time
@@ -227,6 +232,175 @@ def props(path, iface):
         return call(path, "org.freedesktop.DBus.Properties", "GetAll", GLib.Variant("(s)", (iface,)))[0]
     except GLib.Error:
         return None
+
+
+# --- KDE Connect's temporary folder --------------------------------------------
+# KDE Connect saves the pictures in your phone's notifications in $TMPDIR/kdeconnect_$USER, and
+# runs with umask 022. Under the shared /tmp another account can create that folder first: KDE
+# Connect uses it anyway (its chmod fails silently) and the pictures land there readable by that
+# account. `setup-kdeconnect` gives KDE Connect your runtime folder as $TMPDIR, and umask 077.
+
+KDECONNECT_UNIT = "app-org.kde.kdeconnect.daemon@autostart.service"  # from /etc/xdg/autostart
+CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+KDECONNECT_DROPIN = os.path.join(CONFIG_HOME, "systemd/user", KDECONNECT_UNIT + ".d", "omarchy-phone-private.conf")
+KDECONNECT_DBUS_FILE = os.path.join(DATA_HOME, "dbus-1/services", SERVICE + ".service")
+DROPIN_TEXT = """\
+# Written by the omarchy-phone plugin (phone.py setup-kdeconnect). KDE Connect keeps the
+# pictures in your phone's notifications in $TMPDIR/kdeconnect_$USER; /tmp is shared with every
+# account on this PC, so it gets your private runtime folder instead, and a private umask.
+[Service]
+Environment=TMPDIR=%t
+UMask=0077
+"""
+DBUS_FILE_TEXT = f"""\
+# Written by the omarchy-phone plugin (phone.py setup-kdeconnect). When something calls KDE
+# Connect while it isn't running, it starts through {KDECONNECT_UNIT},
+# with its private temporary folder, rather than straight from D-Bus.
+[D-BUS Service]
+Name={SERVICE}
+Exec=/usr/bin/kdeconnectd
+SystemdService={KDECONNECT_UNIT}
+"""
+
+
+def kdeconnect_pid():
+    """The running KDE Connect daemon's PID, asked of the bus (which never starts it), or None."""
+    try:
+        reply = bus().call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                "GetConnectionUnixProcessID", GLib.Variant("(s)", (SERVICE,)),
+                                GLib.VariantType("(u)"), Gio.DBusCallFlags.NONE, 2000, None)
+        return reply.unpack()[0]
+    except GLib.Error:
+        return None
+
+
+def is_kdeconnectd(pid):
+    try:
+        with open(f"/proc/{pid}/comm") as f:
+            return f.read().strip() == "kdeconnectd"
+    except OSError:
+        return False
+
+
+def process_env(pid):
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            pairs = f.read().split(b"\0")
+    except OSError:
+        return None
+    return dict(p.decode(errors="replace").split("=", 1) for p in pairs if b"=" in p)
+
+
+def private_folder(path):
+    """Whether `path` is a real folder (not a symlink) that only this account can enter."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o077
+
+
+def pictures_folder(env):
+    return os.path.join(env.get("TMPDIR") or "/tmp", "kdeconnect_" + env.get("USER", ""))
+
+
+def kdeconnect_pictures():
+    """A warning for the panel while the pictures in your phone's notifications could be read by
+    another account, else "". Under a shared temporary folder it also claims kdeconnect_$USER for
+    you (0700) while nobody else has, and tightens yours."""
+    pid = kdeconnect_pid()
+    env = process_env(pid) if pid else None
+    if env is None or private_folder(env.get("TMPDIR") or "/tmp"):
+        return ""
+    folder = pictures_folder(env)
+    try:
+        os.mkdir(folder, 0o700)
+    except OSError:
+        pass
+    try:
+        st = os.lstat(folder)
+    except OSError:
+        st = None
+    if st and stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid():
+        if st.st_mode & 0o077:
+            try:  # a real folder of ours: nobody else can swap it in sticky /tmp
+                os.chmod(folder, 0o700)
+            except OSError:
+                pass
+        return "KDE Connect keeps the pictures in your phone's notifications in the shared /tmp. " \
+               "Keep private moves them to your own folder."
+    return f"Another account owns {folder}, where KDE Connect keeps the pictures in your phone's " \
+           "notifications, so it can see them. Keep private moves them to your own folder."
+
+
+def clear_pictures(folder):
+    """Delete the pictures KDE Connect left in `folder`: only regular files of ours, never
+    following a symlink, even in a folder another account owns."""
+    try:
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return
+    try:
+        for name in os.listdir(fd):
+            try:
+                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid():
+                    os.unlink(name, dir_fd=fd)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
+
+
+def setup_kdeconnect():
+    """Run KDE Connect with your runtime folder as its temporary folder and umask 077, whether
+    it starts at login or because something called it, then restart it."""
+    loaded = subprocess.run(["systemctl", "--user", "show", "-p", "LoadState", "--value", KDECONNECT_UNIT],
+                            capture_output=True, text=True, check=False).stdout.strip()
+    if loaded != "loaded":
+        notify("KDE Connect", f"Nothing changed: there's no {KDECONNECT_UNIT}, so this session's "
+               "autostart doesn't start KDE Connect.", "critical")
+        return 1
+    for path, text in ((KDECONNECT_DROPIN, DROPIN_TEXT), (KDECONNECT_DBUS_FILE, DBUS_FILE_TEXT)):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".new", "w") as f:
+            f.write(text)
+        os.replace(path + ".new", path)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    try:  # so D-Bus reads the new service file
+        bus().call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ReloadConfig",
+                        None, None, Gio.DBusCallFlags.NONE, 5000, None)
+    except GLib.Error:
+        pass
+    old = kdeconnect_pid()
+    old_env = process_env(old) if old else None
+    subprocess.run(["systemctl", "--user", "stop", KDECONNECT_UNIT], check=False)
+    if old and is_kdeconnectd(old):  # started some other way
+        try:
+            os.kill(old, signal.SIGTERM)
+        except OSError:
+            pass
+        for _ in range(50):
+            if not is_kdeconnectd(old):
+                break
+            time.sleep(0.1)
+    subprocess.run(["systemctl", "--user", "start", KDECONNECT_UNIT], check=False)
+    pid = None
+    for _ in range(50):
+        pid = kdeconnect_pid()
+        if pid:
+            break
+        time.sleep(0.1)
+    env = process_env(pid) if pid else None
+    if not env or not private_folder(env.get("TMPDIR") or "/tmp"):
+        notify("KDE Connect", "Set up, but KDE Connect isn't running that way yet: log out and back in.", "critical")
+        return 1
+    if old_env and not private_folder(old_env.get("TMPDIR") or "/tmp"):
+        clear_pictures(pictures_folder(old_env))
+    notify("KDE Connect", "Restarted with its temporary folder in your private runtime folder: "
+           "the pictures in your phone's notifications are yours alone.")
+    return 0
 
 
 def device_ids():
@@ -929,6 +1103,7 @@ def status():
     try:
         out["devices"] = [read_device(i) for i in device_ids()]
         out["tailnet"] = read_tailnet(out["devices"])
+        out["pictures"] = kdeconnect_pictures()
     except GLib.Error:
         out["daemon"] = False
     out["adb"] = read_adb()
@@ -993,6 +1168,8 @@ def main(argv):
         return 0
     if cmd == "setup-commands":
         return setup_commands()
+    if cmd == "setup-kdeconnect":
+        return setup_kdeconnect()
     if cmd == "tailnet" and (not args or args[0] in ("on", "off")):
         return tailnet(not args or args[0] == "on")
     if cmd == "lost":
