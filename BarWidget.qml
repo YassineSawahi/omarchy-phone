@@ -107,6 +107,7 @@ BarWidget {
 
   readonly property string tooltipLabel: {
     if (!root.status) return "Looking for your phone…"
+    if (root.status.stopped) return "KDE Connect stopped · Keep private, in the panel"
     if (!root.status.daemon) return "KDE Connect isn't running"
     if (root.pairRequests.length) return "Pairing request from " + root.pairRequests[0].name
     if (!root.phone) return "No phone paired · click to set up"
@@ -120,6 +121,7 @@ BarWidget {
   // Shown in place of the phone card while there is nothing to show.
   readonly property string setupHint: {
     if (!root.status) return "Looking for your phone…"
+    if (root.status.stopped) return ""  // the pictures hint below says why, with the way out
     if (!root.status.daemon) return "KDE Connect isn't running. Right-click the bar icon to try again."
     if (root.phone || root.pairable.length) return ""
     return "Install KDE Connect on the phone (Play Store or F-Droid) and open it on the same Wi-Fi. It shows up here to pair."
@@ -494,7 +496,8 @@ BarWidget {
           wrapMode: Text.WordWrap
         }
 
-        // KDE Connect keeps notification pictures in the shared /tmp until it's set up otherwise.
+        // KDE Connect keeps notification pictures in the shared /tmp until it's set up otherwise;
+        // stopped, while another account owns its folder there.
         Column {
           visible: root.picturesHint !== ""
           width: parent.width
@@ -503,9 +506,9 @@ BarWidget {
             width: parent.width
             textFormat: Text.PlainText
             text: root.picturesHint
-            color: col.dim
+            color: root.status && root.status.stopped ? root.bar.foreground : col.dim
             font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
+            font.pixelSize: root.status && root.status.stopped ? Style.font.body : Style.font.caption
             wrapMode: Text.WordWrap
           }
           Button {

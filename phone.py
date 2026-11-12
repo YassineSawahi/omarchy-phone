@@ -222,6 +222,7 @@ def bus():
 
 
 def call(path, iface, method, args=None, timeout=3000):
+    kdeconnect_gate()  # may start KDE Connect: only once its picture folder is yours alone
     reply = bus().call_sync(SERVICE, ROOT + path, iface, method, args, None,
                             Gio.DBusCallFlags.NONE, timeout, None)
     return reply.unpack() if reply else ()
@@ -239,6 +240,8 @@ def props(path, iface):
 # runs with umask 022. Under the shared /tmp another account can create that folder first: KDE
 # Connect uses it anyway (its chmod fails silently) and the pictures land there readable by that
 # account. `setup-kdeconnect` gives KDE Connect your runtime folder as $TMPDIR, and umask 077.
+# Until then, every call() checks that folder before it could start or read KDE Connect: it claims
+# the folder for you while nobody else has, and stops KDE Connect if another account owns it.
 
 KDECONNECT_UNIT = "app-org.kde.kdeconnect.daemon@autostart.service"  # from /etc/xdg/autostart
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
@@ -262,6 +265,8 @@ Name={SERVICE}
 Exec=/usr/bin/kdeconnectd
 SystemdService={KDECONNECT_UNIT}
 """
+STOPPED_STAMP = os.path.join(RUNTIME, "omarchy-phone-kdeconnect-stopped")
+STOPPED_NOTICE_EVERY = 600
 
 
 def kdeconnect_pid():
@@ -305,13 +310,47 @@ def pictures_folder(env):
     return os.path.join(env.get("TMPDIR") or "/tmp", "kdeconnect_" + env.get("USER", ""))
 
 
-def kdeconnect_pictures():
-    """A warning for the panel while the pictures in your phone's notifications could be read by
-    another account, else "". Under a shared temporary folder it also claims kdeconnect_$USER for
-    you (0700) while nobody else has, and tightens yours."""
+def set_up():
+    """Whether Keep private is in place, so KDE Connect starts with your runtime folder as $TMPDIR."""
+    return os.path.isfile(KDECONNECT_DROPIN) and os.path.isfile(KDECONNECT_DBUS_FILE)
+
+
+def kdeconnect_env():
+    """KDE Connect's PID and environment while it runs, else (None, the $TMPDIR and $USER it
+    would start with)."""
     pid = kdeconnect_pid()
     env = process_env(pid) if pid else None
-    if env is None or private_folder(env.get("TMPDIR") or "/tmp"):
+    if env is not None:
+        return pid, env
+    tmp = os.environ.get("XDG_RUNTIME_DIR") if set_up() else os.environ.get("TMPDIR")
+    return None, {"TMPDIR": tmp or "", "USER": os.environ.get("USER", "")}
+
+
+def stop_kdeconnect(pid):
+    """Stop KDE Connect: its autostart unit, and `pid` as well if it started some other way."""
+    subprocess.run(["systemctl", "--user", "stop", KDECONNECT_UNIT], capture_output=True, check=False)
+    if pid and is_kdeconnectd(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+        for _ in range(50):
+            if not is_kdeconnectd(pid):
+                break
+            time.sleep(0.1)
+
+
+class Exposed(GLib.Error):
+    """KDE Connect would save the pictures in your phone's notifications where another account can
+    see them, so it's stopped and left alone until Keep private."""
+
+
+def check_pictures():
+    """Before KDE Connect is started or read: a hint for the panel ("" when all is well), or
+    Exposed. Under a shared temporary folder it claims kdeconnect_$USER for you (0700) while
+    nobody else has, and tightens yours; if another account owns it, KDE Connect is stopped."""
+    pid, env = kdeconnect_env()
+    if private_folder(env.get("TMPDIR") or "/tmp"):
         return ""
     folder = pictures_folder(env)
     try:
@@ -328,10 +367,30 @@ def kdeconnect_pictures():
                 os.chmod(folder, 0o700)
             except OSError:
                 pass
-        return "KDE Connect keeps the pictures in your phone's notifications in the shared /tmp. " \
-               "Keep private moves them to your own folder."
-    return f"Another account owns {folder}, where KDE Connect keeps the pictures in your phone's " \
-           "notifications, so it can see them. Keep private moves them to your own folder."
+        return "KDE Connect keeps the pictures in your phone's notifications in the shared /tmp, " \
+               "in a folder only you can open. Keep private moves them to your own folder."
+    if pid:  # it would go on saving them there
+        stop_kdeconnect(pid)
+        if due(STOPPED_STAMP, STOPPED_NOTICE_EVERY):
+            notify("KDE Connect stopped", f"Another account owns {folder}, where KDE Connect saves the "
+                   "pictures in your phone's notifications. Keep private in the Phone panel moves them "
+                   "to your own folder and starts it again.", "critical")
+    return Exposed(f"KDE Connect is stopped: another account owns {folder}, where it would save the "
+                   "pictures in your phone's notifications. Keep private moves them to your own "
+                   "folder and starts KDE Connect again.")
+
+
+_gate = None  # what check_pictures() found, once per run
+
+
+def kdeconnect_gate():
+    """Run before anything that could start KDE Connect or read from it: every call() does."""
+    global _gate
+    if _gate is None:
+        _gate = check_pictures()
+    if isinstance(_gate, Exposed):
+        raise _gate
+    return _gate
 
 
 def clear_pictures(folder):
@@ -362,6 +421,7 @@ def setup_kdeconnect():
         notify("KDE Connect", f"Nothing changed: there's no {KDECONNECT_UNIT}, so this session's "
                "autostart doesn't start KDE Connect.", "critical")
         return 1
+    old, old_env = kdeconnect_env()  # before the files below change where it would start
     for path, text in ((KDECONNECT_DROPIN, DROPIN_TEXT), (KDECONNECT_DBUS_FILE, DBUS_FILE_TEXT)):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path + ".new", "w") as f:
@@ -373,18 +433,7 @@ def setup_kdeconnect():
                         None, None, Gio.DBusCallFlags.NONE, 5000, None)
     except GLib.Error:
         pass
-    old = kdeconnect_pid()
-    old_env = process_env(old) if old else None
-    subprocess.run(["systemctl", "--user", "stop", KDECONNECT_UNIT], check=False)
-    if old and is_kdeconnectd(old):  # started some other way
-        try:
-            os.kill(old, signal.SIGTERM)
-        except OSError:
-            pass
-        for _ in range(50):
-            if not is_kdeconnectd(old):
-                break
-            time.sleep(0.1)
+    stop_kdeconnect(old)
     subprocess.run(["systemctl", "--user", "start", KDECONNECT_UNIT], check=False)
     pid = None
     for _ in range(50):
@@ -396,7 +445,7 @@ def setup_kdeconnect():
     if not env or not private_folder(env.get("TMPDIR") or "/tmp"):
         notify("KDE Connect", "Set up, but KDE Connect isn't running that way yet: log out and back in.", "critical")
         return 1
-    if old_env and not private_folder(old_env.get("TMPDIR") or "/tmp"):
+    if not private_folder(old_env.get("TMPDIR") or "/tmp"):  # even if it was stopped for being there
         clear_pictures(pictures_folder(old_env))
     notify("KDE Connect", "Restarted with its temporary folder in your private runtime folder: "
            "the pictures in your phone's notifications are yours alone.")
@@ -1101,9 +1150,11 @@ def status():
            "mirroring": mirroring(), "tailnet": None, "presence": read_presence(),
            "sms": bool(shutil.which("kdeconnect-sms"))}
     try:
+        out["pictures"] = kdeconnect_gate()  # before anything that could start KDE Connect
         out["devices"] = [read_device(i) for i in device_ids()]
         out["tailnet"] = read_tailnet(out["devices"])
-        out["pictures"] = kdeconnect_pictures()
+    except Exposed as e:
+        out.update(daemon=False, stopped=True, pictures=e.message)
     except GLib.Error:
         out["daemon"] = False
     out["adb"] = read_adb()
@@ -1156,6 +1207,7 @@ def main(argv):
     if cmd == "photos":
         return photos(quiet="--quiet" in args)
     if cmd == "sms":
+        kdeconnect_gate()  # the SMS app starts KDE Connect too
         return subprocess.run(["uwsm-app", "--", "kdeconnect-sms"]).returncode
     if cmd == "setup-phone":
         return setup_phone()
@@ -1179,4 +1231,8 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exposed as e:
+        print(e.message, file=sys.stderr)
+        sys.exit(1)
