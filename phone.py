@@ -74,6 +74,9 @@ SERVICE = "org.kde.kdeconnect"
 ROOT = "/modules/kdeconnect"
 IFACE = "org.kde.kdeconnect"
 SCRIPT = os.path.realpath(__file__)
+# The system Python, the one python-gobject (gi) is installed for. Never "python3" from PATH,
+# where mise or pyenv may put an interpreter without it first.
+PYTHON = "/usr/bin/python3"
 ADB_TIMEOUT = 5
 
 # Tailscale hands out addresses from these ranges.
@@ -1054,11 +1057,11 @@ def pc_commands():
         ("Mute PC", f"{omarchy} audio output volume mute-toggle"),
         ("Silence notifications", f"{omarchy} toggle notification silencing"),
         ("Keep PC awake", f"{omarchy} toggle idle"),
-        ("Mirror this phone", f"uwsm-app -- python3 {SCRIPT} mirror"),
+        ("Mirror this phone", f"uwsm-app -- {PYTHON} {SCRIPT} mirror"),
         ("Suspend PC", "systemctl suspend"),
     ]
     if os.path.exists(VNC_HELPER):
-        cmds.insert(5, ("VNC on/off", f"python3 {SCRIPT} vnc-toggle"))
+        cmds.insert(5, ("VNC on/off", f"{PYTHON} {SCRIPT} vnc-toggle"))
     # Only offer radios this PC actually has.
     if glob.glob("/sys/class/bluetooth/hci*"):
         cmds.insert(2, ("Bluetooth on/off", f"{omarchy} bluetooth power toggle"))
@@ -1102,8 +1105,8 @@ def setup_commands():
 def vnc_toggle():
     """Run-command entry: switch VNC, then tell the phone where it ended up,
     since a run command can't show its result there."""
-    subprocess.run(["python3", VNC_HELPER, "toggle"], check=False)
-    r = subprocess.run(["python3", VNC_HELPER, "status"], capture_output=True, text=True)
+    subprocess.run([PYTHON, VNC_HELPER, "toggle"], check=False)
+    r = subprocess.run([PYTHON, VNC_HELPER, "status"], capture_output=True, text=True)
     try:
         on = json.loads(r.stdout).get("running")
     except ValueError:

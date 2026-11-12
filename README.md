@@ -20,7 +20,7 @@ An [Omarchy](https://omarchy.org) bar widget for your Android phone, at home or 
 omarchy plugin add https://github.com/YassineSawahi/omarchy-phone.git --enable
 ```
 
-Needs `kdeconnect` and `python-gobject`. KDE Connect has to be installed on the phone too, on the same Wi-Fi the first time, to pair. For the phone-side switches, mirroring and the camera: `android-tools` (adb) and `scrcpy`, with USB debugging on (or Wireless debugging paired with `adb pair` on Android 11+). Optional extras: `tailscale` for away-from-home, and `wtype` + `wl-clipboard` for handoff.
+Needs `kdeconnect` and `python-gobject`. The plugin always runs on the system Python (`/usr/bin/python3`), the one `python-gobject` is for, even when mise or pyenv put another `python3` first on your PATH. KDE Connect has to be installed on the phone too, on the same Wi-Fi the first time, to pair. For the phone-side switches, mirroring and the camera: `android-tools` (adb) and `scrcpy`, with USB debugging on (or Wireless debugging paired with `adb pair` on Android 11+). Optional extras: `tailscale` for away-from-home, and `wtype` + `wl-clipboard` for handoff.
 
 `phone.py setup-phone` grants KDE Connect on the phone the permissions it needs for the clipboard, calls and SMS (needs ADB).
 

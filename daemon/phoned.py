@@ -361,7 +361,8 @@ class Daemon:
         now = time.time()
         if self.where == "home" and (self.photos_due or now - self.last_photos > PHOTOS_EVERY):
             self.photos_due, self.last_photos = False, now
-            self.photos_proc = subprocess.Popen(["python3", phone.SCRIPT, "photos", "--quiet"])
+            # this interpreter (the system Python), not "python3" from PATH, which may lack gi
+            self.photos_proc = subprocess.Popen([sys.executable, phone.SCRIPT, "photos", "--quiet"])
 
     # --- battery -----------------------------------------------------------
 

@@ -11,6 +11,8 @@ BarWidget {
 
   // The helper sits next to this file, wherever the plugin is installed.
   readonly property string scriptPath: decodeURIComponent(Qt.resolvedUrl("phone.py").toString().replace(/^file:\/\//, ""))
+  // The system Python, which has python-gobject: "python3" from PATH may be mise's or pyenv's, without it.
+  readonly property string python: "/usr/bin/python3"
   readonly property int refreshIntervalSec: Math.max(5, Number(root.settings.refreshIntervalSec) || 20)
   readonly property int lowThreshold: Number(root.settings.lowThreshold) || 15
   readonly property int maxNotifications: root.settings.maxNotifications === undefined ? 5 : Number(root.settings.maxNotifications)
@@ -200,7 +202,7 @@ BarWidget {
   // time; clicks while one is in flight are dropped.
   function run(args) {
     if (actionProc.running) return
-    actionProc.command = ["python3", root.scriptPath].concat(args)
+    actionProc.command = [root.python, root.scriptPath].concat(args)
     actionProc.running = true
   }
 
@@ -214,7 +216,7 @@ BarWidget {
       return
     }
     // uwsm-app gives scrcpy its own scope, like any app launched from the menu.
-    Quickshell.execDetached(["uwsm-app", "--", "python3", root.scriptPath, "mirror"])
+    Quickshell.execDetached(["uwsm-app", "--", root.python, root.scriptPath, "mirror"])
     mirrorRefresh.restart()
   }
 
@@ -252,7 +254,7 @@ BarWidget {
   // Actions that open windows or wait on the phone (file chooser, camera,
   // scrcpy) run on their own, so the panel stays usable meanwhile.
   function launch(args, closePanel) {
-    Quickshell.execDetached(["uwsm-app", "--", "python3", root.scriptPath].concat(args))
+    Quickshell.execDetached(["uwsm-app", "--", root.python, root.scriptPath].concat(args))
     if (closePanel) root.close()
     mirrorRefresh.restart()
   }
@@ -290,7 +292,7 @@ BarWidget {
     var next = root.replyQueue[0]
     root.replyQueue = root.replyQueue.slice(1)
     replyProc.message = next.message
-    replyProc.command = ["python3", root.scriptPath, "reply", next.device, next.replyId]
+    replyProc.command = [root.python, root.scriptPath, "reply", next.device, next.replyId]
     replyProc.running = true
   }
 
@@ -325,7 +327,7 @@ BarWidget {
 
   Process {
     id: readProc
-    command: ["python3", root.scriptPath]
+    command: [root.python, root.scriptPath]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.applyReading(text)
